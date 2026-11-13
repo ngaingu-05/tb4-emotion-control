@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Webcam emotion recognition and bounded TurtleBot 4 motion."""
+import sys
+import time
+from pathlib import Path
+
+import cv2
+import rclpy
+from geometry_msgs.msg import Twist, TwistStamped
+from rclpy.node import Node
+
+# Make the pure controller import work both from the source tree and install space.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tb4_emotion_control'))
+try:
+    from tb4_emotion_control.core import EMOTIONS, EmotionController
+except ImportError:
+    from core import EMOTIONS, EmotionController
+
+
+class EmotionControlNode(Node):
+    def __init__(self):
+        super().__init__('emotion_control_node')
+        self.declare_parameter('camera', 0)
+        self.declare_parameter('stamped', True)
+        self.declare_parameter('confidence', 0.45)
+        self.declare_parameter('inference_period', 0.5)
+        self.declare_parameter('show_window', True)
+        self.declare_parameter('mock_emotion', '')
+        self.stamped = self.get_parameter('stamped').value
+        self.confidence = float(self.get_parameter('confidence').value)
+        self.inference_period = float(self.get_parameter('inference_period').value)
+        self.show_window = self.get_parameter('show_window').value
+        self.mock_emotion = self.get_parameter('mock_emotion').value.lower().strip()
+        if self.mock_emotion and self.mock_emotion not in EMOTIONS:
+            raise RuntimeError('mock_emotion must be happy, sad, neutral, angry, surprise, or fear.')
+        self.controller = EmotionController(stable_frames=2)
+        self.last_inference = 0.0
+        self.last_emotion = 'No face'
+        self.last_confidence = 0.0
+        self.last_frame = None
+        self.detector = None
+        self.camera = cv2.VideoCapture(int(self.get_parameter('camera').value))
+        if not self.camera.isOpened():
+            raise RuntimeError('Cannot open webcam. Set the camera:=N launch argument.')
+        if not self.mock_emotion:
+            # FER loads its model on initialization; keep it lazy relative to ROS imports.
+            from fer import FER
+            self.detector = FER(mtcnn=False)
+        self.publisher = self.create_publisher(
+            TwistStamped if self.stamped else Twist, '/cmd_vel', 10)
+        self.timer = self.create_timer(0.05, self.tick)
+        self.get_logger().info('Emotion control ready. Publishing bounded actions to /cmd_vel.')
+
+    def detect(self, frame):
+        if self.mock_emotion:
+            return self.mock_emotion, 1.0
+        faces = self.detector.detect_emotions(frame)
+        if not faces:
+            return None, 0.0
+        # Use the largest visible face to avoid tiny background detections.
+        face = max(faces, key=lambda item: item['box'][2] * item['box'][3])
+        supported = [(name, value) for name, value in face['emotions'].items()
+                     if name.lower() in EMOTIONS]
+        if not supported:
+            return None, 0.0
+        emotion, score = max(supported, key=lambda item: item[1])
+        score = float(score)
+        if score < self.confidence:
+            return None, score
+        return emotion.lower(), score
+
+    def publish(self, linear, angular):
+        if self.stamped:
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.twist.linear.x = float(linear)
+            msg.twist.angular.z = float(angular)
+        else:
+            msg = Twist()
+            msg.linear.x = float(linear)
+            msg.angular.z = float(angular)
+        self.publisher.publish(msg)
+
+    def tick(self):
+        now = time.monotonic()
+        ok, frame = self.camera.read()
+        if not ok:
+            self.last_emotion = 'Camera lost'
+            self.controller.lost()
+            self.publish(0.0, 0.0)
+            return
+        self.last_frame = frame
+        if now - self.last_inference >= self.inference_period:
+            self.last_inference = now
+            try:
+                emotion, score = self.detect(frame)
+            except Exception as exc:  # inference errors must fail safe
+                self.get_logger().error(f'Emotion inference failed: {exc}')
+                emotion, score = None, 0.0
+            self.last_confidence = score
+            self.last_emotion = emotion.title() if emotion else 'No face / uncertain'
+            if emotion:
+                self.controller.observe(emotion, now)
+            else:
+                self.controller.lost()
+        linear, angular = self.controller.velocity(now)
+        self.publish(linear, angular)
+        if self.show_window:
+            view = frame.copy()
+            active = self.controller.action or 'stopped'
+            label = f'{self.last_emotion} {self.last_confidence:.2f} | {active}'
+            cv2.putText(view, label, (16, 32), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (30, 240, 30), 2, cv2.LINE_AA)
+            cv2.imshow('TurtleBot emotion control (q to quit)', view)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                self.get_logger().info('Quit requested from camera window.')
+                rclpy.shutdown()
+
+    def close(self):
+        self.controller.lost()
+        try:
+            self.publish(0.0, 0.0)
+        except Exception:
+            pass
+        self.camera.release()
+        if self.show_window:
+            cv2.destroyAllWindows()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = None
+    try:
+        node = EmotionControlNode()
+        rclpy.spin(node)
+    except (KeyboardInterrupt, RuntimeError) as exc:
+        if str(exc):
+            print(f'emotion_control_node: {exc}', file=sys.stderr)
+    finally:
+        if node is not None:
+            node.close()
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

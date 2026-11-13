@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.8)
+project(tb4_emotion_control)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY launch worlds DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/emotion_control_node DESTINATION lib/${PROJECT_NAME})
+install(FILES tb4_emotion_control/core.py DESTINATION lib/${PROJECT_NAME})
+ament_package()

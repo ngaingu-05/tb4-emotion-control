@@ -1,0 +1,19 @@
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+
+# ROS 2 / colcon build products
+build/
+install/
+log/
+
+# Model files and runtime captures are downloaded/generated locally
+models/
+*.task
+*.h5
+*.keras
+*.onnx
+*.mp4
+*.avi
