@@ -15,18 +15,26 @@ chạy có thời hạn; nhận diện neutral, không thấy mặt, lỗi camer
 | Surprise | Quay tại chỗ một vòng | 2π/0.50 s, ω=0.50 rad/s |
 | Fear | Tiến nhẹ | 1.5 s, v=0.08 m/s |
 
-## Cài đặt
+## Lấy package và build mô phỏng
 
-Trong workspace đã cài ROS 2 Jazzy và OpenCV hệ thống:
+Đặt repo trong thư mục `src` của workspace ROS 2 Jazzy:
+
+```bash
+cd ~/turtlebot4
+git clone https://github.com/ngaingu-05/tb4-emotion-control.git src/tb4_emotion_control
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select tb4_emotion_control
+source install/setup.bash
+```
+
+Không cần cài TensorFlow để chạy mô phỏng với biểu cảm giả. Để nhận diện webcam
+thật, cài stack CPU tùy chọn trong virtualenv:
 
 ```bash
 cd ~/turtlebot4
 python3 -m venv --system-site-packages .venv-emotion
 .venv-emotion/bin/python -m pip install -r src/tb4_emotion_control/requirements-ai.txt
 .venv-emotion/bin/python -m pip install --no-deps fer==22.5.1
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install --packages-select tb4_emotion_control
-source install/setup.bash
 ```
 
 ## Chạy
@@ -58,19 +66,20 @@ robot có timeout vận tốc downstream nếu tiến trình bị kill đột ng
 ## Chạy mô phỏng Gazebo + RViz
 
 Mô phỏng dùng Gazebo Harmonic, TurtleBot 4 standard, RViz và đồng hồ mô phỏng.
-Để khởi chạy cả mô phỏng, tự undock sau 15 giây và chạy biểu cảm Happy giả sau
-25 giây (không cần tải mô hình FER):
+Để khởi chạy cả mô phỏng, demo đợi đến khi action undock hoàn tất rồi mới chạy
+biểu cảm Happy giả. Lệnh này không cần cài mô hình FER:
 
 ```bash
 cd ~/turtlebot4
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-ros2 launch tb4_emotion_control demo.launch.py mock_emotion:=happy
+ros2 launch tb4_emotion_control demo.launch.py mock_emotion:=happy python:=/usr/bin/python3
 ```
 
 Chờ Gazebo/RViz hiện robot và node báo đã sẵn sàng. Demo chọn camera 0; có thể
 đổi bằng `camera:=1`. Muốn nhận diện thật, bỏ `mock_emotion:=happy` sau khi cài
-đủ dependency trong `requirements.txt`. Có thể chỉ khởi động simulator bằng
+stack `requirements-ai.txt`; launch sẽ dùng `.venv-emotion/bin/python` mặc định.
+Có thể chỉ khởi động simulator bằng
 `ros2 launch tb4_emotion_control simulation.launch.py`; simulator để robot trên
 dock, nên gửi `ros2 action send_goal /undock irobot_create_msgs/action/Undock '{}'`
 trước khi chạy node điều khiển riêng.
